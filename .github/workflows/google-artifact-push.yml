@@ -30,21 +30,20 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
 
-      - name: Build Docker image
-        run: |
-          docker build -t $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }} .
-
-      - name: Push Docker image
-        run: |
-          docker push $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }}
-
-      - name: Tag Docker image as latest 
+      - name: Build, Tag and Push Docker images 
         run: | 
-          docker tag $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }} \ $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:latest
+          IMAGE_SHA=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }}
+          IMAGE_LATEST=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:latest 
 
-      - name: Push Docker image with latest tag 
-        run: | 
-          docker push $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:latest
+          # Build with SHA tag 
+          docker build -t $IMAGE_SHA . 
+
+          # Push SHA tag 
+          docker push $IMAGE_SHA 
+
+          # Tag as latest and push 
+          docker tag $IMAGE_SHA $IMAGE_LATEST 
+          docker push $IMAGE_LATEST
 
       - name: Get GKE credentials
         uses: google-github-actions/get-gke-credentials@v2
@@ -56,4 +55,5 @@ jobs:
       - name: Deploy
         run: |
           kubectl apply -f deployment.yml
+          kubectl rollout status deployment/${{ env.APP_NAME }}
           kubectl get pods
