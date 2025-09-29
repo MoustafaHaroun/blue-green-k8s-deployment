@@ -11,6 +11,8 @@ env:
   PROJECT_ID: public-cloud-concepts-471510 
   REPOSITORY: basic-web--app 
   APP_NAME: basic-web-app 
+  CLUSTER_NAME: autopilot-cluster-1   
+  CLUSTER_LOCATION: europe-west4      
 
 jobs:
   build:
@@ -35,3 +37,23 @@ jobs:
       - name: Push Docker image
         run: |
           docker push $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }}
+
+      - name: Tag Docker image as latest 
+        run: | 
+          docker tag $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }} \ $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:latest
+
+      - name: Push Docker image with latest tag 
+        run: | 
+          docker push $REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:latest
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.CLUSTER_LOCATION }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Deploy
+        run: |
+          kubectl apply -f deployment.yml
+          kubectl get pods
