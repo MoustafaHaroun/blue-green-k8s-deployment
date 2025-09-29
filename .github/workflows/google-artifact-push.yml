@@ -11,7 +11,7 @@ env:
   PROJECT_ID: public-cloud-concepts-471510 
   REPOSITORY: basic-web--app 
   APP_NAME: basic-web-app 
-  CLUSTER_NAME: autopilot-cluster-1   
+  CLUSTER_NAME: basic-web-app-cluster   
   CLUSTER_LOCATION: europe-west4      
 
 jobs:
