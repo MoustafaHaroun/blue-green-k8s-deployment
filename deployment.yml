@@ -15,5 +15,6 @@ spec:
       containers:
       - name: web-app 
         image: europe-west4-docker.pkg.dev/public-cloud-concepts-471510/basic-web--app/basic-web-app:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 80 
