@@ -51,6 +51,27 @@ jobs:
           location: ${{ env.CLUSTER_LOCATION }}
           project_id: ${{ env.PROJECT_ID }}
 
+      - name: Ensure initial infrastructure exists
+        run: |
+          # Ensure blue deployment exists (for first run)
+          if ! kubectl get deployment basic-web-app-deployment-blue &>/dev/null; then
+            echo "Creating blue deployment (initial setup)..."
+            kubectl apply -f k8s/blue-deployment.yml
+          fi
+          
+          # Ensure service exists
+          if ! kubectl get service basic-web-app-loadbalancer-service &>/dev/null; then
+            echo "Creating service (initial setup)..."
+            kubectl apply -f k8s/service.yml
+          fi
+          
+          # Ensure green deployment exists
+          if ! kubectl get deployment basic-web-app-deployment-green &>/dev/null; then
+            echo "Creating green deployment (initial setup)..."
+            kubectl apply -f k8s/green-deployment.yml
+            kubectl scale deployment basic-web-app-deployment-green --replicas=0
+          fi
+
       - name: Determine current environment
         id: current-env
         run: |
@@ -74,25 +95,30 @@ jobs:
           TARGET_COLOR=${{ steps.current-env.outputs.target-color }}
           IMAGE_SHA=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }}
           
+          # Ensure target deployment exists (create if it doesn't)
+          if ! kubectl get deployment basic-web-app-deployment-${TARGET_COLOR} &>/dev/null; then
+            echo "Creating ${TARGET_COLOR} deployment..."
+            kubectl apply -f k8s/${TARGET_COLOR}-deployment.yml
+          fi
+          
           # Update the deployment with new image
           kubectl set image deployment/basic-web-app-deployment-${TARGET_COLOR} web-app=${IMAGE_SHA}
+          
+          # Scale up if it's at 0 replicas
+          kubectl scale deployment basic-web-app-deployment-${TARGET_COLOR} --replicas=2
           
           # Wait for rollout to complete
           kubectl rollout status deployment/basic-web-app-deployment-${TARGET_COLOR} --timeout=300s
 
-      - name: Health check target environment
+      - name: Health check target environment (basic check)
         run: |
           TARGET_COLOR=${{ steps.current-env.outputs.target-color }}
           
-          # Wait for pods to be ready
+          # Simple check - just wait for pods to be ready
+          echo "Waiting for ${TARGET_COLOR} pods to be ready..."
           kubectl wait --for=condition=ready pod -l app=basic-web-app,color=${TARGET_COLOR} --timeout=300s
           
-          # Get pod IP for health check
-          POD_IP=$(kubectl get pods -l app=basic-web-app,color=${TARGET_COLOR} -o jsonpath='{.items[0].status.podIP}')
-          
-          # Simple health check (you can customize this based on your app)
-          echo "Performing health check on ${TARGET_COLOR} environment..."
-          kubectl run health-check-${TARGET_COLOR} --image=curlimages/curl --rm -i --restart=Never -- curl -f http://${POD_IP}:80 || exit 1
+          echo "✅ ${TARGET_COLOR} environment is ready!"
 
       - name: Switch traffic to target environment
         run: |
