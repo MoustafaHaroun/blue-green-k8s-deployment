@@ -152,7 +152,7 @@ jobs:
           kubectl get deployments -l app=basic-web-app
           kubectl get pods -l app=basic-web-app
 
-      - name: Cleanup old environment (optional)
+      - name: Cleanup old environment 
         if: success()
         run: |
           CURRENT_COLOR=${{ steps.current-env.outputs.current-color }}
