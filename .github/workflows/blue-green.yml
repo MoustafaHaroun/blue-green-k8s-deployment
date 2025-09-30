@@ -1,0 +1,138 @@
+name: Blue-Green Deployment
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  REGION: europe-west4
+  PROJECT_ID: public-cloud-concepts-471510 
+  REPOSITORY: basic-web--app 
+  APP_NAME: basic-web-app 
+  CLUSTER_NAME: basic-web-app-cluster   
+  CLUSTER_LOCATION: europe-west4      
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+
+      - name: Build, Tag and Push Docker images 
+        run: | 
+          IMAGE_SHA=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }}
+          IMAGE_LATEST=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:latest 
+
+          # Build with SHA tag 
+          docker build -t $IMAGE_SHA . 
+
+          # Push SHA tag 
+          docker push $IMAGE_SHA 
+
+          # Tag as latest and push 
+          docker tag $IMAGE_SHA $IMAGE_LATEST 
+          docker push $IMAGE_LATEST
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.CLUSTER_LOCATION }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Determine current environment
+        id: current-env
+        run: |
+          # Check which environment is currently active by looking at the service selector
+          CURRENT_COLOR=$(kubectl get service basic-web-app-loadbalancer-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+          echo "current-color=$CURRENT_COLOR" >> $GITHUB_OUTPUT
+          
+          # Determine target environment (opposite of current)
+          if [ "$CURRENT_COLOR" = "blue" ]; then
+            TARGET_COLOR="green"
+          else
+            TARGET_COLOR="blue"
+          fi
+          echo "target-color=$TARGET_COLOR" >> $GITHUB_OUTPUT
+          
+          echo "Current environment: $CURRENT_COLOR"
+          echo "Target environment: $TARGET_COLOR"
+
+      - name: Update target deployment image
+        run: |
+          TARGET_COLOR=${{ steps.current-env.outputs.target-color }}
+          IMAGE_SHA=$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$APP_NAME:${{ github.sha }}
+          
+          # Update the deployment with new image
+          kubectl set image deployment/basic-web-app-deployment-${TARGET_COLOR} web-app=${IMAGE_SHA}
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/basic-web-app-deployment-${TARGET_COLOR} --timeout=300s
+
+      - name: Health check target environment
+        run: |
+          TARGET_COLOR=${{ steps.current-env.outputs.target-color }}
+          
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod -l app=basic-web-app,color=${TARGET_COLOR} --timeout=300s
+          
+          # Get pod IP for health check
+          POD_IP=$(kubectl get pods -l app=basic-web-app,color=${TARGET_COLOR} -o jsonpath='{.items[0].status.podIP}')
+          
+          # Simple health check (you can customize this based on your app)
+          echo "Performing health check on ${TARGET_COLOR} environment..."
+          kubectl run health-check-${TARGET_COLOR} --image=curlimages/curl --rm -i --restart=Never -- curl -f http://${POD_IP}:80 || exit 1
+
+      - name: Switch traffic to target environment
+        run: |
+          TARGET_COLOR=${{ steps.current-env.outputs.target-color }}
+          CURRENT_COLOR=${{ steps.current-env.outputs.current-color }}
+          
+          echo "Switching traffic from ${CURRENT_COLOR} to ${TARGET_COLOR}"
+          
+          # Update service selector to point to target environment
+          kubectl patch service basic-web-app-loadbalancer-service -p '{"spec":{"selector":{"color":"'${TARGET_COLOR}'"}}}'
+          
+          echo "Traffic successfully switched to ${TARGET_COLOR} environment"
+
+      - name: Verify deployment
+        run: |
+          TARGET_COLOR=${{ steps.current-env.outputs.target-color }}
+          
+          # Wait a moment for the service to update
+          sleep 10
+          
+          # Verify the service is pointing to the correct environment
+          CURRENT_SERVICE_COLOR=$(kubectl get service basic-web-app-loadbalancer-service -o jsonpath='{.spec.selector.color}')
+          echo "Service is now pointing to: $CURRENT_SERVICE_COLOR"
+          
+          if [ "$CURRENT_SERVICE_COLOR" != "$TARGET_COLOR" ]; then
+            echo "ERROR: Service selector was not updated correctly"
+            exit 1
+          fi
+          
+          # Show current deployments status
+          kubectl get deployments -l app=basic-web-app
+          kubectl get pods -l app=basic-web-app
+
+      - name: Cleanup old environment (optional)
+        if: success()
+        run: |
+          CURRENT_COLOR=${{ steps.current-env.outputs.current-color }}
+          
+          # Scale down the old environment (optional - you might want to keep it for quick rollback)
+          echo "Scaling down ${CURRENT_COLOR} environment..."
+          kubectl scale deployment basic-web-app-deployment-${CURRENT_COLOR} --replicas=0
+          
+          echo "Blue-green deployment completed successfully!"
