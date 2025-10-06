@@ -116,7 +116,7 @@ jobs:
           
           # Simple check - just wait for pods to be ready
           echo "Waiting for ${TARGET_COLOR} pods to be ready..."
-          kubectl wait --for=condition=ready pod -l app=basic-web-app,color=${TARGET_COLOR} --timeout=300s
+          kubectl rollout status deployment/basic-web-app-deployment-${TARGET_COLOR} --timeout=300s
           
           echo "✅ ${TARGET_COLOR} environment is ready!"
 
@@ -137,6 +137,7 @@ jobs:
           TARGET_COLOR=${{ steps.current-env.outputs.target-color }}
           
           # Wait a moment for the service to update
+
           sleep 10
           
           # Verify the service is pointing to the correct environment
